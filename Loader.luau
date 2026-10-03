@@ -12,7 +12,7 @@ local FirebaseAuthSecret = "s17Qi1xYY5CI2HlXvDHqlLheWswOJ2HpjbRZ9nIV"
 local AdminPanelLibUrl = "https://raw.githubusercontent.com/jejeeeeeee/GlobalScripts/main/HubLibs/DaHoodAdminPanelLib.luau"
 local MenuLoaderUrl = "https://raw.githubusercontent.com/jejeeeeeee/GlobalScripts/main/MenuLoader.luau"
 
-local GitHubAccessToken = "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"
+local GitHubAccessToken = ""
 local IsVerifying = false
 
 local function GetClientHwid()
