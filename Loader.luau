@@ -4,7 +4,7 @@ local RbxAnalyticsService = game:GetService("RbxAnalyticsService")
 
 local LocalPlayer = Players.LocalPlayer
 
-local GitHubAccessToken = "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"
+local GitHubAccessToken = "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"
 local FirebaseDatabaseUrl = "https://dahoodsspkeys-8e3f6-default-rtdb.europe-west1.firebasedatabase.app/"
 local FirebaseKeysPath = "Keys"
 local FirebaseAuthSecret = "s17Qi1xYY5CI2HlXvDHqlLheWswOJ2HpjbRZ9nIV"
