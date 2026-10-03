@@ -4,14 +4,15 @@ local RbxAnalyticsService = game:GetService("RbxAnalyticsService")
 
 local LocalPlayer = Players.LocalPlayer
 
-local GitHubAccessToken = "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"
 local FirebaseDatabaseUrl = "https://dahoodsspkeys-8e3f6-default-rtdb.europe-west1.firebasedatabase.app/"
 local FirebaseKeysPath = "Keys"
+local FirebaseGitHubTokenPath = "GitHubToken"
 local FirebaseAuthSecret = "s17Qi1xYY5CI2HlXvDHqlLheWswOJ2HpjbRZ9nIV"
 
 local AdminPanelLibUrl = "https://raw.githubusercontent.com/jejeeeeeee/GlobalScripts/main/HubLibs/DaHoodAdminPanelLib.luau"
 local MenuLoaderUrl = "https://raw.githubusercontent.com/jejeeeeeee/GlobalScripts/main/MenuLoader.luau"
 
+local GitHubAccessToken = "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"
 local IsVerifying = false
 
 local function GetClientHwid()
@@ -92,12 +93,59 @@ local function SendHttpRequest(TargetUrl, Method, CustomHeaders, BodyString)
 	return false, nil, 0
 end
 
+local function BuildFirebaseEndpointUrl(SubPath)
+	local BaseUrl = FirebaseDatabaseUrl:gsub("/+$", "")
+	local Endpoint = BaseUrl .. "/" .. SubPath .. ".json"
+	if FirebaseAuthSecret ~= "" then
+		Endpoint = Endpoint .. "?auth=" .. HttpService:UrlEncode(FirebaseAuthSecret)
+	end
+	return Endpoint
+end
+
+local function SendFirebaseJsonRequest(TargetUrl, Method, PayloadTable)
+	local EncodedBody = PayloadTable and HttpService:JSONEncode(PayloadTable) or nil
+	local JsonHeaders = {
+		["Content-Type"] = "application/json"
+	}
+	return SendHttpRequest(TargetUrl, Method, JsonHeaders, EncodedBody)
+end
+
+local function FetchGitHubTokenFromFirebase()
+	if GitHubAccessToken ~= "" then
+		return GitHubAccessToken
+	end
+
+	local TokenEndpoint = BuildFirebaseEndpointUrl(FirebaseGitHubTokenPath)
+	local FetchSuccess, ResponseBody = SendFirebaseJsonRequest(TokenEndpoint, "GET", nil)
+	if FetchSuccess and ResponseBody and ResponseBody ~= "" and ResponseBody ~= "null" then
+		local DecodeSuccess, DecodedToken = pcall(function()
+			return HttpService:JSONDecode(ResponseBody)
+		end)
+		if DecodeSuccess and typeof(DecodedToken) == "string" and DecodedToken ~= "" then
+			GitHubAccessToken = DecodedToken:gsub("^%s+", ""):gsub("%s+$", "")
+			_G.GitHubAccessToken = GitHubAccessToken
+			return GitHubAccessToken
+		end
+	end
+
+	return GitHubAccessToken
+end
+
 local function ConvertRawUrlToGitHubApiUrl(RawUrl)
-	local Owner, Repo, Branch, FilePath = string.match(tostring(RawUrl or ""),"^https?://raw%.githubusercontent%.com/([^/]+)/([^/]+)/([^/]+)/(.+)$")
+	local Owner, Repo, Branch, FilePath = string.match(
+		tostring(RawUrl or ""),
+		"^https?://raw%.githubusercontent%.com/([^/]+)/([^/]+)/([^/]+)/(.+)$"
+	)
 	if not Owner or not Repo or not Branch or not FilePath then
 		return nil
 	end
-	return string.format(	"https://api.github.com/repos/%s/%s/contents/%s?ref=%s", Owner, Repo, FilePath, Branch)
+	return string.format(
+		"https://api.github.com/repos/%s/%s/contents/%s?ref=%s",
+		Owner,
+		Repo,
+		FilePath,
+		Branch
+	)
 end
 
 local function FetchUrlWithGitHubAuth(TargetUrl)
@@ -105,36 +153,37 @@ local function FetchUrlWithGitHubAuth(TargetUrl)
 	local IsGitHubUrl = string.find(CleanUrl, "githubusercontent.com", 1, true) ~= nil
 		or string.find(CleanUrl, "api.github.com", 1, true) ~= nil
 
-	local HasToken = GitHubAccessToken ~= ""
-		and not string.find(GitHubAccessToken, "YOUR_PRIVATE_REPO", 1, true)
+	local ActiveToken = FetchGitHubTokenFromFirebase()
+	local HasToken = ActiveToken ~= ""
 
 	if IsGitHubUrl and HasToken then
 		local AuthHeaders = {
-			["Authorization"] = "Bearer " .. GitHubAccessToken,
+			["Authorization"] = "Bearer " .. ActiveToken,
 			["Accept"] = "application/vnd.github.v3.raw",
+			["User-Agent"] = "RobloxClient",
 			["Cache-Control"] = "no-cache"
 		}
-
-		local RawSuccess, RawBody = SendHttpRequest(CleanUrl, "GET", AuthHeaders, nil)
-		if RawSuccess and typeof(RawBody) == "string" and RawBody ~= "" then
-			return RawBody
-		end
 
 		local ApiUrl = ConvertRawUrlToGitHubApiUrl(CleanUrl)
 		if ApiUrl then
 			local ApiSuccess, ApiBody = SendHttpRequest(ApiUrl, "GET", AuthHeaders, nil)
-			if ApiSuccess and typeof(ApiBody) == "string" and ApiBody ~= "" then
+			if ApiSuccess and typeof(ApiBody) == "string" and ApiBody ~= "" and not string.find(ApiBody, "^404:") then
 				return ApiBody
 			end
+		end
+
+		local RawSuccess, RawBody = SendHttpRequest(CleanUrl, "GET", AuthHeaders, nil)
+		if RawSuccess and typeof(RawBody) == "string" and RawBody ~= "" and not string.find(RawBody, "^404:") then
+			return RawBody
 		end
 	end
 
 	local DirectSuccess, DirectBody = SendHttpRequest(CleanUrl, "GET", nil, nil)
-	if DirectSuccess and typeof(DirectBody) == "string" then
+	if DirectSuccess and typeof(DirectBody) == "string" and not string.find(DirectBody, "^404:") then
 		return DirectBody
 	end
 
-	return game:HttpGet(CleanUrl)
+	error("GitHub fetch failed (404/401). Check that GitHubToken in Firebase is valid and not revoked: " .. CleanUrl)
 end
 
 local function LoadPrivateGitHubScript(TargetUrl)
@@ -143,7 +192,9 @@ local function LoadPrivateGitHubScript(TargetUrl)
 		error("Failed to fetch script from GitHub: " .. tostring(TargetUrl))
 	end
 
-	local PatchedSource = RawSource:gsub("game:HttpGetAsync%s*%(", "_G.PrivateGitHubHttpGet("):gsub("game:HttpGet%s*%(", "_G.PrivateGitHubHttpGet(")
+	local PatchedSource = RawSource
+		:gsub("game:HttpGetAsync%s*%(", "_G.PrivateGitHubHttpGet(")
+		:gsub("game:HttpGet%s*%(", "_G.PrivateGitHubHttpGet(")
 
 	local CompiledChunk, CompileError = loadstring(PatchedSource)
 	if not CompiledChunk then
@@ -163,20 +214,7 @@ local function SanitizeKeyForPath(RawKey)
 end
 
 local function BuildFirebaseKeyUrl(SanitizedKey)
-	local BaseUrl = FirebaseDatabaseUrl:gsub("/+$", "")
-	local Endpoint = BaseUrl .. "/" .. FirebaseKeysPath .. "/" .. SanitizedKey .. ".json"
-	if FirebaseAuthSecret ~= "" then
-		Endpoint = Endpoint .. "?auth=" .. HttpService:UrlEncode(FirebaseAuthSecret)
-	end
-	return Endpoint
-end
-
-local function SendFirebaseJsonRequest(TargetUrl, Method, PayloadTable)
-	local EncodedBody = PayloadTable and HttpService:JSONEncode(PayloadTable) or nil
-	local JsonHeaders = {
-		["Content-Type"] = "application/json"
-	}
-	return SendHttpRequest(TargetUrl, Method, JsonHeaders, EncodedBody)
+	return BuildFirebaseEndpointUrl(FirebaseKeysPath .. "/" .. SanitizedKey)
 end
 
 local function VerifyAndLinkFirebaseKey(RawKey, CurrentHwid)
@@ -242,6 +280,7 @@ local function VerifyAndLinkFirebaseKey(RawKey, CurrentHwid)
 
 		if typeof(KeyData.GitHubToken) == "string" and KeyData.GitHubToken ~= "" then
 			GitHubAccessToken = KeyData.GitHubToken
+			_G.GitHubAccessToken = GitHubAccessToken
 		end
 
 		local ExistingHwid = KeyData.HWID or KeyData.Hwid or KeyData.hwid
@@ -272,6 +311,7 @@ local function VerifyAndLinkFirebaseKey(RawKey, CurrentHwid)
 	return false, "Invalid key."
 end
 
+FetchGitHubTokenFromFirebase()
 local Library = LoadPrivateGitHubScript(AdminPanelLibUrl)
 local CurrentHwid = GetClientHwid()
 
